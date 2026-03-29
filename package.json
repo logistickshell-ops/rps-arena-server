@@ -18,7 +18,7 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "joi": "^17.10.2",
-    "pg": "^8.11.3" // или mongoose для MongoDB
+    "pg": "^8.11.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
