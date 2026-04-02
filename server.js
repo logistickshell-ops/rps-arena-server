@@ -31,13 +31,14 @@ app.use(express.json());
 app.use(cors());
 
 // --- Имитация базы данных (заменить на реальную БД позже) ---
-let users = []; // [{ id, email, passwordHash, balance, level, ... }, ...]
+let users = []; // [{ id, email, passwordHash, balance, level, inventory, deck, stats, achievements }, ...]
 
 // --- Валидационные схемы Joi ---
 const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
-  confirmPassword: Joi.string().valid(Joi.ref('password')).required()
+  playerName: Joi.string().min(3).max(30).required(), // Добавлено имя игрока
+  confirmPassword: Joi.string().valid(Joi.ref('password')).required() // Добавлено подтверждение пароля
 });
 
 const loginSchema = Joi.object({
@@ -76,12 +77,17 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { email, password } = value;
+    const { email, password, playerName } = value; // Извлекаем playerName
 
-    // Проверка, существует ли пользователь
-    const existingUser = users.find(u => u.email === email);
-    if (existingUser) {
+    // Проверка, существует ли пользователь с таким email или playerName
+    const existingUserByEmail = users.find(u => u.email === email);
+    if (existingUserByEmail) {
       return res.status(409).json({ error: 'Пользователь с таким email уже существует.' });
+    }
+    
+    const existingUserByName = users.find(u => u.playerName === playerName);
+    if (existingUserByName) {
+      return res.status(409).json({ error: 'Имя игрока уже занято.' });
     }
 
     // Хэширование пароля
@@ -92,11 +98,21 @@ app.post('/api/auth/register', async (req, res) => {
     const newUser = {
       id: Date.now().toString(), // Простой ID, в реальной БД - UUID или автоинкремент
       email,
+      playerName, // Сохраняем имя игрока
       passwordHash: hashedPassword,
       balance: 1000, // Начальный баланс
       level: 1,
-      inventory: [],
-      deck: []
+      inventory: [], // Коллекция карт
+      deck: [],      // Боевая колода
+      stats: {       // Статистика
+        totalWins: 0,
+        totalLosses: 0,
+        currentStreak: 0,
+        bestStreak: 0,
+        totalBattles: 0
+      },
+      achievements: {}, // Достижения
+      quests: []         // Ежедневные задания
     };
 
     users.push(newUser);
@@ -108,7 +124,13 @@ app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({
       message: 'Регистрация успешна',
       token,
-      user: { id: newUser.id, email: newUser.email, balance: newUser.balance, level: newUser.level }
+      user: { 
+        id: newUser.id, 
+        email: newUser.email,
+        playerName: newUser.playerName, // Возвращаем имя игрока
+        balance: newUser.balance, 
+        level: newUser.level 
+      }
     });
   } catch (error) {
     console.error("Ошибка при регистрации:", error);
@@ -144,7 +166,13 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       message: 'Вход успешен',
       token,
-      user: { id: user.id, email: user.email, balance: user.balance, level: user.level }
+      user: { 
+        id: user.id, 
+        email: user.email,
+        playerName: user.playerName, // Возвращаем имя игрока
+        balance: user.balance, 
+        level: user.level 
+      }
     });
   } catch (error) {
     console.error("Ошибка при входе:", error);
@@ -165,11 +193,72 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
   res.json({
     id: user.id,
     email: user.email,
+    playerName: user.playerName, // Возвращаем имя игрока
     balance: user.balance,
     level: user.level,
     inventory: user.inventory,
-    deck: user.deck
+    deck: user.deck,
+    stats: user.stats,
+    achievements: user.achievements,
+    quests: user.quests
   });
+});
+
+// Пример: Обновить баланс пользователя
+app.put('/api/user/balance', authenticateToken, (req, res) => {
+  const user = users.find(u => u.id === req.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Пользователь не найден' });
+  }
+  
+  const { newBalance } = req.body;
+  if (typeof newBalance !== 'number' || newBalance < 0) {
+    return res.status(400).json({ error: 'Неверный формат баланса' });
+  }
+  
+  user.balance = newBalance;
+  res.json({ message: 'Баланс обновлён', newBalance: user.balance });
+});
+
+// Пример: Обновить боевую колоду пользователя
+app.put('/api/user/deck', authenticateToken, (req, res) => {
+  const user = users.find(u => u.id === req.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Пользователь не найден' });
+  }
+  
+  const { newDeck } = req.body;
+  // Проверка, что newDeck - массив и не превышает 5 карт
+  if (!Array.isArray(newDeck) || newDeck.length > 5) {
+    return res.status(400).json({ error: 'Колода может содержать не более 5 карт' });
+  }
+  
+  // Проверка, что все карты из колоды принадлежат пользователю (опционально)
+  // ... логика проверки ...
+  
+  user.deck = newDeck;
+  res.json({ message: 'Колода обновлена', deck: user.deck });
+});
+
+// Пример: Обновить статистику пользователя после боя
+app.put('/api/user/stats', authenticateToken, (req, res) => {
+  const user = users.find(u => u.id === req.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Пользователь не найден' });
+  }
+  
+  const { won, newStats } = req.body;
+  if (typeof won !== 'boolean' || !newStats) {
+    return res.status(400).json({ error: 'Неверный формат данных статистики' });
+  }
+  
+  // Проверка, что newStats соответствует структуре
+  user.stats = newStats;
+  
+  // Опционально: обновить достижения
+  // ... логика обновления достижений ...
+  
+  res.json({ message: 'Статистика обновлена', stats: user.stats });
 });
 
 // --- Обработка WebSocket подключений ---
