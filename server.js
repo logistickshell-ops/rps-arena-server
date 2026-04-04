@@ -31,14 +31,14 @@ app.use(express.json());
 app.use(cors());
 
 // --- Имитация базы данных (заменить на реальную БД позже) ---
-let users = []; // [{ id, email, passwordHash, balance, level, inventory, deck, stats, achievements }, ...]
+let users = []; // [{ id, email, passwordHash, playerName, balance, level, inventory, deck, stats, achievements }, ...]
 
 // --- Валидационные схемы Joi ---
 const registerSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
-  playerName: Joi.string().min(3).max(30).required(), // Добавлено имя игрока
-  confirmPassword: Joi.string().valid(Joi.ref('password')).required() // Добавлено подтверждение пароля
+  playerName: Joi.string().min(3).max(30).required(), // --- ДОБАВЛЕНО: Имя игрока ---
+  confirmPassword: Joi.string().valid(Joi.ref('password')).required() // --- ДОБАВЛЕНО: Подтверждение пароля ---
 });
 
 const loginSchema = Joi.object({
@@ -77,17 +77,17 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: error.details[0].message });
     }
 
-    const { email, password, playerName } = value; // Извлекаем playerName
+    const { email, password, playerName } = value; // --- ИЗМЕНЕНО: Извлекаем playerName ---
 
-    // Проверка, существует ли пользователь с таким email или playerName
+    // Проверка, существует ли пользователь с таким email ИЛИ playerName
     const existingUserByEmail = users.find(u => u.email === email);
     if (existingUserByEmail) {
       return res.status(409).json({ error: 'Пользователь с таким email уже существует.' });
     }
     
-    const existingUserByName = users.find(u => u.playerName === playerName);
+    const existingUserByName = users.find(u => u.playerName === playerName); // --- ДОБАВЛЕНО: Проверка имени ---
     if (existingUserByName) {
-      return res.status(409).json({ error: 'Имя игрока уже занято.' });
+        return res.status(409).json({ error: 'Имя игрока уже занято.' });
     }
 
     // Хэширование пароля
@@ -98,7 +98,7 @@ app.post('/api/auth/register', async (req, res) => {
     const newUser = {
       id: Date.now().toString(), // Простой ID, в реальной БД - UUID или автоинкремент
       email,
-      playerName, // Сохраняем имя игрока
+      playerName, // --- ДОБАВЛЕНО: Сохраняем имя игрока ---
       passwordHash: hashedPassword,
       balance: 1000, // Начальный баланс
       level: 1,
@@ -124,12 +124,17 @@ app.post('/api/auth/register', async (req, res) => {
     res.status(201).json({
       message: 'Регистрация успешна',
       token,
-      user: { 
-        id: newUser.id, 
+      user: { // --- ИЗМЕНЕНО: Возвращаем полный объект user ---
+        id: newUser.id,
         email: newUser.email,
-        playerName: newUser.playerName, // Возвращаем имя игрока
-        balance: newUser.balance, 
-        level: newUser.level 
+        playerName: newUser.playerName, // --- ДОБАВЛЕНО: Возвращаем имя игрока ---
+        balance: newUser.balance,
+        level: newUser.level,
+        inventory: newUser.inventory,
+        deck: newUser.deck,
+        stats: newUser.stats,
+        achievements: newUser.achievements,
+        quests: newUser.quests
       }
     });
   } catch (error) {
@@ -166,12 +171,17 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       message: 'Вход успешен',
       token,
-      user: { 
-        id: user.id, 
+      user: { // --- ИЗМЕНЕНО: Возвращаем полный объект user ---
+        id: user.id,
         email: user.email,
-        playerName: user.playerName, // Возвращаем имя игрока
-        balance: user.balance, 
-        level: user.level 
+        playerName: user.playerName, // --- ДОБАВЛЕНО: Возвращаем имя игрока ---
+        balance: user.balance,
+        level: user.level,
+        inventory: user.inventory,
+        deck: user.deck,
+        stats: user.stats,
+        achievements: user.achievements,
+        quests: user.quests
       }
     });
   } catch (error) {
@@ -181,6 +191,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // --- Защищённые роуты (требуют токен) ---
+
 // Пример: Получить профиль пользователя
 app.get('/api/user/profile', authenticateToken, (req, res) => {
   // req.userId содержит ID аутентифицированного пользователя
@@ -193,7 +204,7 @@ app.get('/api/user/profile', authenticateToken, (req, res) => {
   res.json({
     id: user.id,
     email: user.email,
-    playerName: user.playerName, // Возвращаем имя игрока
+    playerName: user.playerName, // --- ДОБАВЛЕНО: Возвращаем имя игрока ---
     balance: user.balance,
     level: user.level,
     inventory: user.inventory,
@@ -210,12 +221,12 @@ app.put('/api/user/balance', authenticateToken, (req, res) => {
   if (!user) {
     return res.status(404).json({ error: 'Пользователь не найден' });
   }
-  
+
   const { newBalance } = req.body;
   if (typeof newBalance !== 'number' || newBalance < 0) {
     return res.status(400).json({ error: 'Неверный формат баланса' });
   }
-  
+
   user.balance = newBalance;
   res.json({ message: 'Баланс обновлён', newBalance: user.balance });
 });
@@ -226,16 +237,16 @@ app.put('/api/user/deck', authenticateToken, (req, res) => {
   if (!user) {
     return res.status(404).json({ error: 'Пользователь не найден' });
   }
-  
+
   const { newDeck } = req.body;
   // Проверка, что newDeck - массив и не превышает 5 карт
   if (!Array.isArray(newDeck) || newDeck.length > 5) {
     return res.status(400).json({ error: 'Колода может содержать не более 5 карт' });
   }
-  
+
   // Проверка, что все карты из колоды принадлежат пользователю (опционально)
   // ... логика проверки ...
-  
+
   user.deck = newDeck;
   res.json({ message: 'Колода обновлена', deck: user.deck });
 });
@@ -246,19 +257,40 @@ app.put('/api/user/stats', authenticateToken, (req, res) => {
   if (!user) {
     return res.status(404).json({ error: 'Пользователь не найден' });
   }
-  
+
   const { won, newStats } = req.body;
   if (typeof won !== 'boolean' || !newStats) {
     return res.status(400).json({ error: 'Неверный формат данных статистики' });
   }
-  
+
   // Проверка, что newStats соответствует структуре
   user.stats = newStats;
-  
   // Опционально: обновить достижения
   // ... логика обновления достижений ...
-  
+
   res.json({ message: 'Статистика обновлена', stats: user.stats });
+});
+
+// --- НОВЫЙ РОУТ: Обновить имя игрока ---
+app.put('/api/user/name', authenticateToken, (req, res) => {
+  const user = users.find(u => u.id === req.userId);
+  if (!user) {
+    return res.status(404).json({ error: 'Пользователь не найден' });
+  }
+
+  const { newName } = req.body;
+  if (!newName || typeof newName !== 'string' || newName.length < 3 || newName.length > 30) {
+    return res.status(400).json({ error: 'Имя игрока должно быть строкой длиной от 3 до 30 символов' });
+  }
+
+  // Проверка, не занято ли имя другим пользователем
+  const existingUserWithNewName = users.find(u => u.playerName === newName && u.id !== req.userId);
+  if (existingUserWithNewName) {
+      return res.status(409).json({ error: 'Это имя игрока уже занято другим пользователем.' });
+  }
+
+  user.playerName = newName;
+  res.json({ message: 'Имя игрока обновлено', playerName: user.playerName });
 });
 
 // --- Обработка WebSocket подключений ---
